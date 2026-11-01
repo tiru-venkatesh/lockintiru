@@ -23,7 +23,7 @@
 
 - **Degree:** B.Tech — Computer Science & Engineering
 - **College:** JNTU Narasaraopeta (JNTU NRT)
-- **Current stage:** B.Tech CSE student (first year)
+- **Current stage:** B.Tech CSE student (second year, batch 2025-29)
 - **Career direction:** AI Engineer / AI Product Builder
 
 Current focus areas: AI engineering, LLMs, AI agents, AI-powered products, hackathons, full-stack development, technical portfolio building, personal brand/content, startup/product experimentation.
@@ -325,11 +325,9 @@ ai-back-1, vfai-tiru-5, ai-back, vfai-tiru-2, vfai-tiru2, vfai-tiru-1, vfai-tiru
 | sowjanyaportfolio | Netlify Drop | Aug 28, 2025 |
 | sukeerthi | Netlify Drop | Aug 19, 2025 |
 | sukeerti | Netlify Drop | Aug 19, 2025 |
-| satsdarling | Netlify Drop | Aug 13, 2025 |
 | tiruportfolio2 | Netlify Drop | Aug 4, 2025 |
 | makeup-mahi | Netlify Drop | Jul 30, 2025 |
 | burger-bliss-tiru | Netlify Drop | Jul 30, 2025 |
-| birthday-bash-for-jaideep | Netlify Drop | Jul 30, 2025 |
 | tic-tac-teo-tiru | Netlify Drop | Jul 30, 2025 |
 | surprise-by-siddu | Netlify Drop | Jul 25, 2025 |
 | rock-paper-scissors-94397 | Netlify Drop | Jul 24, 2025 |

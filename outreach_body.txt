@@ -1,21 +1,21 @@
-Dear Professor,
+Dear Prof. [Last Name],
 
-I am Tiru Venkatesh, a second-year B.Tech CSE student at JNTU Narasaraopeta, with a strong interest in Artificial Intelligence, Large Language Models, multimodal systems, and autonomous agents.
+I'm Tiru Venkatesh, a second-year B.Tech CSE student at JNTU Narasaraopeta who builds AI agents. [One specific sentence about the professor's paper or topic.]
 
-I have been independently developing and deploying AI systems, with a particular focus on LLM-based applications and agentic architectures. My recent work includes **CivicIQ**, an AI-driven civic intelligence platform that combines RAG, multi-agent workflows, and intelligent complaint analysis, as well as an **autonomous desktop agent** that integrates visual perception, reasoning, and computer interaction into an iterative action loop.
+I learn by shipping, so here's what I've built:
 
-Through these projects, I have developed practical experience in designing AI pipelines, integrating models, working with retrieval and agent architectures, and taking systems from experimentation to deployment. I am now looking to strengthen this foundation through **research-oriented work** and gain exposure to rigorous problem formulation, experimentation, and evaluation.
+- CivicIQ: AI complaint triage for Indian municipal bodies. Multi-agent pipeline (classifier -> priority scorer -> router) plus RAG. Reached the Top 10 stage of Google Gen AI Academy APAC. github.com/tiru-venkatesh/civic-iq
+- OPAI: I'm the founder, building a personal AI operating agent with persistent memory and tool use.
+- ULTRON: a desktop agent that sees the screen, reasons with a vision-language model and acts, in a continuous loop.
+- IBVAP: YOLOv8-based border surveillance analytics for Smart India Hackathon 2026.
 
-I would be grateful for an opportunity to contribute to your research group or ongoing projects, whether through a research internship, project collaboration, or an opportunity to assist with ongoing work. I am willing to invest the time required to learn the relevant literature, tools, and methodologies and contribute meaningfully to the work.
+I can give [10-15] hours a week, remote or on-campus. I'm happy to start with whatever is most useful to your lab, such as literature review, experiments, or code, and I'll prove myself through the work.
 
-Portfolio: https://tiru-venkatesh.github.io
-GitHub: https://github.com/tiru-venkatesh
+Resume attached. Portfolio: tiru-venkatesh.github.io | GitHub: github.com/tiru-venkatesh
 
-I have attached my resume for your reference. If my background aligns with your research interests, I would sincerely appreciate an opportunity to discuss whether there may be a suitable way for me to contribute.
-
-Thank you for your time and consideration.
+Thank you for your time.
 
 Best regards,
-**Tiru Venkatesh**
-B.Tech CSE, Second Year
-JNTU Narasaraopeta
+Tiru Venkatesh
+B.Tech CSE (2025-29), JNTU Narasaraopeta
+tiruvenkatesh123@gmail.com

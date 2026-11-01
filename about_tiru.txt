@@ -1,6 +1,6 @@
 About Tiru Venkatesh (Musirana Veera Venkata Tiru Venkatesh)
 
-Tiru is a first-year B.Tech Computer Science student at JNTU Narasaraopeta.
+Tiru is a second-year B.Tech Computer Science student at JNTU Narasaraopeta.
 He builds AI-powered web products under the brand "Tiru Builds" and pitches
 development services to local businesses (gyms, restaurants). He also
 participates in hackathons.

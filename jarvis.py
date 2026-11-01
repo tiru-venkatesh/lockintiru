@@ -26,6 +26,8 @@ import base64
 import csv
 import itertools
 import json
+import time
+import re
 import mimetypes
 import os
 import sys
@@ -100,8 +102,26 @@ SYSTEM_PROMPT = (
 # Put tiru-venkatesh.pdf next to this script (or point RESUME_PATH at wherever
 # it actually lives). When present, it's attached to every outreach email
 # automatically -- single sends, /bulk, and /bulk-role alike.
-RESUME_PATH = os.environ.get("RESUME_PATH", "tiru-venkatesh.pdf")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+RESUME_PATH = os.environ.get("RESUME_PATH") or os.path.join(_HERE, "tiru-venkatesh.pdf")
 PORTFOLIO_URL = "https://tiru-venkatesh.github.io"
+
+
+def ask_yes_no(prompt: str) -> bool:
+    """Strict confirm prompt. Re-asks on anything that isn't y/yes/n/no
+    (blank = no), so a typo or stray keystroke can never count as approval
+    and never falls through to anything else. Ctrl-C / EOF = no."""
+    while True:
+        try:
+            ans = input(f"{prompt} [y/N]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        if ans in ("y", "yes"):
+            return True
+        if ans in ("", "n", "no"):
+            return False
+        print("  Please type y or n.")
 
 
 def resume_available() -> bool:
@@ -423,31 +443,42 @@ TEMPLATES_FILE = "templates.json"
 
 EMAIL_INTRO = (
     "Dear {name},\n\n"
-    "I'm Tiru Venkatesh, a first-year B.Tech Computer Science & Engineering "
-    "student at JNTU Narasaraopeta, working primarily in AI engineering, "
-    "LLMs, AI agents, and applied Generative AI."
+    "I am Tiru Venkatesh, a second-year B.Tech CSE student at JNTU "
+    "Narasaraopeta, with a strong interest in Artificial Intelligence, Large "
+    "Language Models, and autonomous agents."
 )
 
 EMAIL_ASK = (
-    "I'd be grateful for the chance to discuss whether there's an opening "
-    "for an internship or research assistantship with your group -- even "
-    "informally, to learn more about your current work and how I might "
-    "contribute."
+    "I would be grateful for an opportunity to contribute to your research "
+    "group or ongoing projects, whether through a research internship, a "
+    "project collaboration, or by assisting with ongoing work. I am willing "
+    "to invest the time needed to learn the relevant literature, tools and "
+    "methods, and to contribute meaningfully."
 )
 
 EMAIL_CLOSING = (
     "Portfolio: https://tiru-venkatesh.github.io\n"
     "GitHub: https://github.com/tiru-venkatesh\n"
     "LinkedIn: https://www.linkedin.com/in/tiru-venkatesh-830907202/\n\n"
-    "I've attached my resume for reference, and would be happy to share "
-    "further project details or a writing sample on request.\n\n"
+    "I have attached my resume for your reference. If my background aligns "
+    "with your research interests, I would sincerely appreciate an "
+    "opportunity to discuss whether there may be a suitable way for me to "
+    "contribute.\n\n"
     "Thank you for your time and consideration.\n\n"
     "Best regards,\n"
     "Tiru Venkatesh\n"
-    "AI Engineer | B.Tech CSE, JNTU Narasaraopeta"
+    "B.Tech CSE, Second Year\n"
+    "JNTU Narasaraopeta"
 )
 
-DEFAULT_ROLE_SUBJECT = "Internship / Research Opportunity Inquiry"
+DEFAULT_ROLE_SUBJECT = "Research internship inquiry - 2nd-year CSE student (AI agents, LLMs)"
+BODY_FILE = "outreach_body.txt"
+SENT_LOG = "receipts.txt"                 # one "email,name,type" per sent mail
+SKIP_FILES = ("receipts.txt", "emails.txt")  # never email these again
+DEFAULT_BULK_LIMIT = int(os.environ.get("BULK_LIMIT", "40"))
+BULK_DELAY_SECONDS = float(os.environ.get("BULK_DELAY", "8"))
+EMAIL_RE = re.compile(r"^[^@\s,;<>]+@[^@\s,;<>]+\.[A-Za-z]{2,}$")
+PLACEHOLDER_RE = re.compile(r"\[[^\]\n]{1,60}\]")
 
 
 def load_templates(path: str = TEMPLATES_FILE) -> dict:
@@ -457,143 +488,237 @@ def load_templates(path: str = TEMPLATES_FILE) -> dict:
         return json.load(f)
 
 
+def load_sent_set() -> set:
+    """Addresses we've already emailed (receipts.txt / emails.txt)."""
+    sent = set()
+    for fn in SKIP_FILES:
+        if not os.path.exists(fn):
+            continue
+        with open(fn, "r", encoding="utf-8-sig") as f:
+            for ln in f:
+                first = ln.strip().split(",")[0].strip().strip('"').lower()
+                if "@" in first:
+                    sent.add(first)
+    return sent
+
+
+def log_sent(email: str, name: str, type_key: str) -> None:
+    new_file = not os.path.exists(SENT_LOG) or os.path.getsize(SENT_LOG) == 0
+    with open(SENT_LOG, "a", encoding="utf-8", newline="") as f:
+        if new_file:
+            f.write("email,name,type\n")
+        safe_name = name.replace(",", " ")
+        f.write(f"{email},{safe_name},{type_key}\n")
+
+
 def load_recipients_csv(path: str) -> list:
-    """Read a CSV with columns: email, name (optional), type.
-    'type' must match a key in templates.json (ml, nlp, cv, systems, data, robotics)."""
+    """Read a CSV with columns: email, name (optional), type, and an optional
+    personal_sentence. 'type' must match a key in templates.json."""
     if not os.path.exists(path):
         raise RuntimeError(f"File not found: {path}")
     rows = []
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for r in reader:
-            email = (r.get("email") or "").strip()
+            email = (r.get("email") or "").strip().lower()
             if not email or email.startswith("#"):
                 continue
             rows.append({
                 "email": email,
                 "name": (r.get("name") or "").strip() or "Professor",
                 "type": (r.get("type") or "").strip().lower(),
+                "personal_sentence": (r.get("personal_sentence") or "").strip(),
             })
     return rows
 
 
-def compose_role_email(templates: dict, name: str, type_key: str, variant_idx: int):
-    """Build a personalized subject/body from the fixed intro/closing plus
-    the role-matched middle paragraph for this type and variant index."""
+def compose_role_email(templates: dict, name: str, type_key: str,
+                       variant_idx: int, personal_sentence: str = ""):
+    """Build subject/body: intro, optional personal sentence, role-matched
+    middle paragraph, ask, closing."""
     entry = templates.get(type_key)
     if not entry:
         raise KeyError(f"Unknown type '{type_key}'. Valid types: {', '.join(templates.keys())}")
     variants = entry["variants"]
-    middle = variants[variant_idx % len(variants)]
-    body = f"{EMAIL_INTRO.format(name=name)}\n\n{middle}\n\n{EMAIL_ASK}\n\n{EMAIL_CLOSING}"
-    return DEFAULT_ROLE_SUBJECT, body
+    # No personal_sentence => we know nothing real about their work, so use
+    # the neutral paragraph (what I build + what I want to learn) instead of
+    # variants that claim familiarity with their research.
+    if not personal_sentence and entry.get("neutral"):
+        middle = entry["neutral"]
+    else:
+        middle = variants[variant_idx % len(variants)]
+    parts = [EMAIL_INTRO.format(name=name)]
+    if personal_sentence:
+        parts.append(personal_sentence)
+    parts += [middle, EMAIL_ASK, EMAIL_CLOSING]
+    return DEFAULT_ROLE_SUBJECT, "\n\n".join(parts)
 
 
-def bulk_role_send(path: str) -> None:
-    """Send role-matched outreach emails: each recipient's 'type' column
-    picks the matching template group, and variants are rotated round-robin
-    within each type so consecutive same-type recipients get different wording."""
+def _parse_bulk_args(rest: str):
+    """'file.csv limit=10' -> ('file.csv', 10). Quotes around the path are ok."""
+    limit = DEFAULT_BULK_LIMIT
+    tokens = rest.split()
+    keep = []
+    for t in tokens:
+        m = re.match(r"^(?:--)?limit=(\d+)$", t, re.I)
+        if m:
+            limit = int(m.group(1))
+        else:
+            keep.append(t)
+    return " ".join(keep).strip().strip('"').strip("'"), limit
+
+
+def bulk_role_send(rest: str) -> None:
+    """Role-matched bulk outreach. Skips invalid/duplicate/already-sent
+    addresses, caps each run, previews, asks once, then sends with a short
+    delay and logs every success to receipts.txt."""
+    path, limit = _parse_bulk_args(rest)
     try:
         templates = load_templates()
-    except RuntimeError as e:
-        print(f"[bulk-role] {e}")
-        return
-
-    try:
         recipients = load_recipients_csv(path)
     except RuntimeError as e:
         print(f"[bulk-role] {e}")
         return
-
     if not recipients:
         print(f"[bulk-role] No recipients found in {path}.")
         return
 
-    unknown_types = sorted({r["type"] for r in recipients if r["type"] not in templates})
-    if unknown_types:
-        print(f"[bulk-role] Unknown type(s) in CSV: {', '.join(unknown_types)}")
-        print(f"[bulk-role] Valid types: {', '.join(templates.keys())}")
+    # Rows whose type isn't a research area are skipped, not fatal:
+    # "personal" rows are private addresses (never cold-emailed), anything
+    # else unknown (e.g. "institute") has no matching template.
+    personal = [r for r in recipients if r["type"] == "personal"]
+    unknown = [r for r in recipients if r["type"] not in templates and r["type"] != "personal"]
+    recipients = [r for r in recipients if r["type"] in templates]
+    if personal:
+        print(f"[bulk-role] Skipped {len(personal)} 'personal' (private) addresses.")
+    if unknown:
+        print(f"[bulk-role] Skipped {len(unknown)} rows with no matching type "
+              f"({', '.join(sorted({r['type'] or '(blank)' for r in unknown}))}). "
+              f"Set type to one of: {', '.join(templates.keys())}")
+    if not recipients:
+        print("[bulk-role] Nothing left to send.")
+        return
+
+    already = load_sent_set()
+    seen, todo, skipped = set(), [], {"invalid": 0, "duplicate": 0, "already_sent": 0}
+    for r in recipients:
+        e = r["email"]
+        if not EMAIL_RE.match(e):
+            skipped["invalid"] += 1
+        elif e in seen:
+            skipped["duplicate"] += 1
+        elif e in already:
+            skipped["already_sent"] += 1
+        else:
+            todo.append(r)
+        seen.add(e)
+
+    remaining_after = max(0, len(todo) - limit)
+    todo = todo[:limit]
+    print(f"\n[bulk-role] {len(recipients)} rows | skipped: {skipped['already_sent']} already emailed, "
+          f"{skipped['duplicate']} duplicates, {skipped['invalid']} invalid")
+    if not todo:
+        print("[bulk-role] Nothing new to send.")
         return
 
     counters = {t: itertools.cycle(range(len(templates[t]["variants"]))) for t in templates}
     attach_path = RESUME_PATH if resume_available() else None
+    if not attach_path:
+        print(f"[bulk-role] ABORTED: resume not found at {RESUME_PATH}. "
+              "Every email says 'I have attached my resume', so nothing was sent. "
+              "Put tiru-venkatesh.pdf next to jarvis.py (or set RESUME_PATH).")
+        return
 
-    print("\n--- Role-matched bulk preview ---")
-    prepared = []
-    for r in recipients:
-        variant_idx = next(counters[r["type"]])
-        subject, body = compose_role_email(templates, r["name"], r["type"], variant_idx)
-        prepared.append((r["email"], subject, body))
-        print(f"  {r['email']:35s} type={r['type']:10s} variant={variant_idx + 1}")
-    print("-----------------------------------")
-    if attach_path:
-        print(f"Resume will be attached to all {len(prepared)} emails: {attach_path}")
-    else:
-        print(f"NOTE: {RESUME_PATH} not found -- sending without a resume attachment.")
+    prepared, problems = [], []
+    for r in todo:
+        v = next(counters[r["type"]])
+        subject, body = compose_role_email(templates, r["name"], r["type"], v, r["personal_sentence"])
+        if PLACEHOLDER_RE.search(body):
+            problems.append(r["email"])
+        prepared.append((r, subject, body, v))
+    if problems:
+        print(f"[bulk-role] BLOCKED: unfilled [placeholder] text in emails to: {', '.join(problems[:5])}")
+        return
 
-    answer = input(f"Send {len(prepared)} role-matched emails? [y/N]: ").strip().lower()
-    if answer != "y":
+    first_r, first_subj, first_body, _ = prepared[0]
+    print(f"\n--- Sample (to {first_r['email']}) ---\nSubject: {first_subj}\n\n{first_body}\n---------------------------")
+    print("\nRecipients this run:")
+    for r, _, _, v in prepared:
+        print(f"  {r['email']:38s} {r['type']:9s} v{v + 1}  {r['name']}")
+    if remaining_after:
+        print(f"\n({remaining_after} more not in this run - limit={limit}. Run again for the next batch.)")
+    print(f"\nAttachment: {attach_path}")
+    no_personal = sum(1 for r, *_ in prepared if not r["personal_sentence"])
+    if no_personal:
+        print(f"Tip: {no_personal}/{len(prepared)} rows have no personal_sentence column filled in; "
+              "a one-line mention of their research makes replies much more likely.")
+
+    if not ask_yes_no(f"\nSend {len(prepared)} emails?"):
         print("[bulk-role] Cancelled.")
         return
 
     sent, failed = 0, []
-    for email, subject, body in prepared:
+    for i, (r, subject, body, _) in enumerate(prepared):
         try:
-            msg_id = send_gmail(email, subject, body, attach_path=attach_path)
-            print(f"  [ok]   {email} (id: {msg_id})")
+            msg_id = send_gmail(r["email"], subject, body, attach_path=attach_path)
+            log_sent(r["email"], r["name"], r["type"])
+            print(f"  [ok]   {r['email']} (id: {msg_id})")
             sent += 1
         except Exception as e:
-            print(f"  [fail] {email}: {e}")
-            failed.append(email)
+            print(f"  [fail] {r['email']}: {e}")
+            failed.append(r["email"])
+        if i < len(prepared) - 1:
+            time.sleep(BULK_DELAY_SECONDS)
 
     print(f"\n[bulk-role] Done. Sent {sent}/{len(prepared)}.")
     if failed:
-        print(f"[bulk-role] Failed: {', '.join(failed)}")
+        print(f"[bulk-role] Failed (not logged, will retry next run): {', '.join(failed)}")
 
 
 def bulk_send(path: str, subject: str, body: str) -> None:
-    """Send the same subject/body to every address in a txt file.
-    One confirmation for the whole batch, not per-email."""
+    """Same subject/body to every address in a txt file (one per line)."""
     try:
         recipients = load_recipients(path)
     except RuntimeError as e:
         print(f"[bulk] {e}")
         return
-
+    already = load_sent_set()
+    recipients = [a for a in dict.fromkeys(x.lower() for x in recipients)
+                  if EMAIL_RE.match(a) and a not in already]
     if not recipients:
-        print(f"[bulk] No addresses found in {path}.")
+        print(f"[bulk] No new valid addresses in {path}.")
+        return
+    if PLACEHOLDER_RE.search(subject + body):
+        print("[bulk] BLOCKED: subject/body still contains a [placeholder].")
         return
 
     attach_path = RESUME_PATH if resume_available() else None
-
+    if not attach_path and "attach" in body.lower():
+        print(f"[bulk] ABORTED: body mentions an attachment but {RESUME_PATH} was not found.")
+        return
     print("\n--- Bulk email preview ---")
-    print(f"File:      {path}")
-    print(f"Subject:   {subject}")
-    print(f"Body:\n{body}")
-    print(f"Recipients ({len(recipients)}):")
+    print(f"Subject:   {subject}\nBody:\n{body}\nRecipients ({len(recipients)}):")
     for addr in recipients:
         print(f"  - {addr}")
-    if attach_path:
-        print(f"Attachment: {attach_path}")
-    else:
-        print(f"NOTE: {RESUME_PATH} not found -- sending without a resume attachment.")
+    print(f"Attachment: {attach_path}" if attach_path else
+          f"NOTE: {RESUME_PATH} not found -- sending without a resume attachment.")
     print("---------------------------")
-
-    answer = input(f"Send to all {len(recipients)} addresses? [y/N]: ").strip().lower()
-    if answer != "y":
+    if not ask_yes_no(f"Send to all {len(recipients)} addresses?"):
         print("[bulk] Cancelled.")
         return
 
     sent, failed = 0, []
-    for addr in recipients:
+    for i, addr in enumerate(recipients):
         try:
             msg_id = send_gmail(addr, subject, body, attach_path=attach_path)
+            log_sent(addr, "", "")
             print(f"  [ok]   {addr} (id: {msg_id})")
             sent += 1
         except Exception as e:
             print(f"  [fail] {addr}: {e}")
             failed.append(addr)
-
+        if i < len(recipients) - 1:
+            time.sleep(BULK_DELAY_SECONDS)
     print(f"\n[bulk] Done. Sent {sent}/{len(recipients)}.")
     if failed:
         print(f"[bulk] Failed: {', '.join(failed)}")
@@ -616,8 +741,10 @@ def confirm_and_send(args: dict) -> str:
         print(f"Attachment: {RESUME_PATH}" if will_attach else "Attachment: none")
     print("----------------------")
 
-    answer = input("Send this email? [y/N]: ").strip().lower()
-    if answer != "y":
+    if want_resume and not will_attach:
+        return ("NOT SENT: resume attachment requested but the PDF was not "
+                f"found at {RESUME_PATH}. Fix the path, then retry.")
+    if not ask_yes_no("Send this email?"):
         return "The user declined to send this email."
 
     try:
@@ -910,6 +1037,29 @@ def main():
         if not user_input:
             continue
 
+        # Let "bulk-role file.csv" / "bulk file.txt" work without the slash,
+        # so they never fall through to the LLM as ordinary chat.
+        _first = user_input.split(None, 1)[0].lower()
+        if _first in ("bulk", "bulk-role", "bulkrole", "clear"):
+            user_input = "/" + user_input
+        if user_input.lower().startswith("/bulkrole"):
+            user_input = "/bulk-role" + user_input[len("/bulkrole"):]
+
+        # A bare "y"/"n"/"ok" at the main prompt is a leftover answer to a
+        # confirm prompt that already closed. Never forward it to the LLM
+        # (that is how the model hallucinated "Hello SWEETY" from old history).
+        if user_input.lower() in ("y", "yes", "yep", "yeah", "n", "no", "nope", "ok", "okay"):
+            print("(Nothing is waiting for confirmation. Re-run the command, e.g. "
+                  "bulk-role file.csv, if you meant to send.)")
+            continue
+
+        # /clear -- wipe saved chat history (not facts or plans)
+        if user_input.lower() == "/clear":
+            memory_store.clear_conversation(CLI_USER_ID)
+            del messages[1:]
+            print("Conversation history cleared.")
+            continue
+
         # /memories -- list what's been remembered long-term
         if user_input.lower() == "/memories":
             facts = memory_store.list_facts(CLI_USER_ID)
@@ -962,6 +1112,13 @@ def main():
                       f"({prog['done']}/{prog['total']}, {prog['pct']}%)")
             continue
 
+        # Commands typed without the leading slash must never reach the LLM
+        # (it has email tools and just hallucinates a subject/body).
+        _first = user_input.split(None, 1)[0].lower() if user_input.split() else ""
+        if _first in ("bulk-role", "bulk", "plan", "plans", "memories", "forget"):
+            print(f"(Commands start with a slash: /{user_input}  -- e.g. /bulk-role file.csv --limit 5)")
+            continue
+
         # /bulk-role <recipients.csv>
         # CSV columns: email,name,type  (type = ml/nlp/cv/systems/data/robotics)
         if user_input.lower().startswith("/bulk-role"):
@@ -973,19 +1130,18 @@ def main():
             continue
 
         # /bulk <file.txt> [| subject | body]
-        # Defaults to "Hello from Tiru Jarvis" if subject/body omitted.
+        # Defaults to the research-internship subject and outreach_body.txt.
         if user_input.lower().startswith("/bulk"):
             rest = user_input[len("/bulk"):].strip()
             parts = [p.strip() for p in rest.split("|")]
-            file_path = parts[0] if parts and parts[0] else None
-            subject = parts[1] if len(parts) > 1 and parts[1] else "Hello from Tiru Jarvis"
-            body = parts[2] if len(parts) > 2 and parts[2] else "Hello from Tiru Jarvis!"
-            # Support "@somefile.txt" to load a long/multi-line body from a file.
+            file_path = parts[0].strip('"').strip("'") if parts and parts[0] else None
+            subject = parts[1] if len(parts) > 1 and parts[1] else DEFAULT_ROLE_SUBJECT
+            body = parts[2] if len(parts) > 2 and parts[2] else "@" + BODY_FILE
             if body.startswith("@"):
                 body_file = body[1:].strip()
                 try:
                     with open(body_file, "r", encoding="utf-8") as bf:
-                        body = bf.read()
+                        body = bf.read().strip()
                 except OSError as e:
                     print(f"Couldn't read body file '{body_file}': {e}")
                     continue
